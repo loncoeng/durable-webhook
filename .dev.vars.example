@@ -1,0 +1,3 @@
+# ローカル実行用。wrangler dev がこれを読む。
+# 実際の値を書いたファイルは .gitignore で除外している。
+ENDPOINTS=[{"id":"demo","targetUrl":"https://example.com/receive","idHeaders":["x-request-id"]}]

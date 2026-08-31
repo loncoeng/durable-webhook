@@ -1,0 +1,17 @@
+name = "durable-webhook"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# 配送待ちを掃いて再試行する。1分おきに回すが、実際に配送するのは
+# バックオフの期限が来たものだけ。空振りは KV の list だけで終わる。
+[triggers]
+crons = ["* * * * *"]
+
+# 受け取り・配送待ち・退避をここに置く。
+# id は wrangler kv namespace create WEBHOOKS で作って書き換える。
+[[kv_namespaces]]
+binding = "WEBHOOKS"
+id = "YOUR_KV_NAMESPACE_ID"
+
+# ENDPOINTS は転送先の URL と署名の鍵を含む。ここには書かず、
+# wrangler secret put ENDPOINTS で登録する。

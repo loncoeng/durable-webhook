@@ -1,0 +1,16 @@
+{
+  "name": "durable-webhook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/index.js && node --check src/delivery.js && node --check src/backoff.js && node --check src/signature.js && node --check src/identity.js && node --check src/store.js && node --check src/config.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
