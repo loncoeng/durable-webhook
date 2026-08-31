@@ -1,5 +1,7 @@
 # durable-webhook
 
+[![test](https://github.com/lon-coeng/durable-webhook/actions/workflows/test.yml/badge.svg)](https://github.com/lon-coeng/durable-webhook/actions/workflows/test.yml)
+
 *[日本語版 / Japanese version](README.ja.md)*
 
 A webhook relay on Cloudflare Workers that **accepts fast and delivers stubbornly.**
