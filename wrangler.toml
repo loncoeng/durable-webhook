@@ -2,16 +2,26 @@ name = "durable-webhook"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
+# <worker名>.<サブドメイン>.workers.dev で公開する。既定でも有効だが、
+# 明示しないとデプロイのたびに警告が出る。
+workers_dev = true
+
+# デプロイごとにバージョン専用の公開 URL が作られる機能。開発中に
+# 版を比べるためのもので、このプロジェクトでは使わない。公開される
+# URL を無用に増やさないため無効にする。
+preview_urls = false
+
 # 配送待ちを掃いて再試行する。1分おきに回すが、実際に配送するのは
 # バックオフの期限が来たものだけ。空振りは KV の list だけで終わる。
 [triggers]
 crons = ["* * * * *"]
 
 # 受け取り・配送待ち・退避をここに置く。
-# id は wrangler kv namespace create WEBHOOKS で作って書き換える。
+# 下の id はこのリポジトリの作者の名前空間。自分で動かすときは
+# wrangler kv namespace create WEBHOOKS で作り直して差し替える。
 [[kv_namespaces]]
 binding = "WEBHOOKS"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "e69f051a37e242c3b4fe6f0fa7a116ef"
 
 # ENDPOINTS は転送先の URL と署名の鍵を含む。ここには書かず、
 # wrangler secret put ENDPOINTS で登録する。
