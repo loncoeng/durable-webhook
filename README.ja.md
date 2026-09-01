@@ -43,6 +43,7 @@ Cron が配送待ちを掃き、間隔を広げながら再試行
   ↓
 GET  /dead-letters/:id                届かなかったものの一覧
 POST /dead-letters/:id/:did/replay    もう一度送る
+     ↑ この2つは運用者向け。ADMIN_TOKEN が要る
 ```
 
 ## 設計上の判断
@@ -57,6 +58,8 @@ POST /dead-letters/:id/:did/replay    もう一度送る
 
 **重複は入口で弾きます。** 送信元は再送してきます。転送先が同じイベントを2回処理すると、誰かが2回課金されます。イベントIDは設定したヘッダから取り、送信元が付けていなければ本文のハッシュで代用します。
 
+**管理系の経路は別の鍵で守ります。** 退避の一覧と再送は運用者が叩くもので、送信元の署名では守れません。特に再送を外から叩かれると、転送先で二重処理が起きます。**このツールが防ぐために作られた事故を、外から起こせることになります。** `ADMIN_TOKEN` が未設定のときは、開くのではなく `503` で止めます。開いていることには誰も気付けませんが、動かないことにはすぐ気付きます。
+
 **何も捨てません。** 試行を尽くした配送は、本文を保ったまま退避へ移します。人間が見て判断できるようにするためです。消してしまうと失敗が見えなくなり、それは失敗そのものより悪い結果です。
 
 ## 導入
@@ -65,6 +68,7 @@ POST /dead-letters/:id/:did/replay    もう一度送る
 npm install
 npx wrangler kv namespace create WEBHOOKS   # 出た id を wrangler.toml へ
 npx wrangler secret put ENDPOINTS
+npx wrangler secret put ADMIN_TOKEN         # 退避の一覧と再送に使う
 npx wrangler deploy
 ```
 
@@ -105,7 +109,9 @@ curl -X POST http://localhost:8787/hook/demo \
   -H 'x-request-id: evt_1' -d '{"hello":"world"}'
 # {"status":"duplicate","eventId":"evt_1"}
 
-curl http://localhost:8787/dead-letters/demo
+# 退避の一覧。ADMIN_TOKEN が要る
+curl http://localhost:8787/dead-letters/demo \
+  -H 'authorization: Bearer <ADMIN_TOKEN>'
 ```
 
 `targetUrl` を 500 を返す先に向ければ、再試行から退避まで一通り確認できます。

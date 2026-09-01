@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/index.js && node --check src/delivery.js && node --check src/backoff.js && node --check src/signature.js && node --check src/identity.js && node --check src/store.js && node --check src/config.js",
+    "check": "node --check src/index.js && node --check src/admin.js && node --check src/delivery.js && node --check src/backoff.js && node --check src/signature.js && node --check src/identity.js && node --check src/store.js && node --check src/config.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },

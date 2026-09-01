@@ -1,12 +1,13 @@
 // Worker の入口。HTTP と Cron の2つの経路がある。
 //
-//   fetch     Webhook を受け取る / 退避の一覧と再送
+//   fetch     Webhook を受け取る / 退避の一覧と再送（要 ADMIN_TOKEN）
 //   scheduled 配送待ちを掃いて再試行する
 //
 // 受け取りの経路では、送信元への応答を何よりも優先する。署名検証と
 // KV への書き込みだけを待ち、配送は waitUntil に逃がす。転送先が
 // 遅くても、送信元には常に速く 200 が返る。
 
+import { checkAdmin } from "./admin.js";
 import { isDue } from "./backoff.js";
 import { ConfigError, loadEndpoints } from "./config.js";
 import { attemptDelivery, createDelivery, decideNext } from "./delivery.js";
@@ -134,24 +135,36 @@ export default {
     const now = Date.now();
 
     if (parts.length === 0) {
-      return json({
-        name: "durable-webhook",
-        endpoints: [...endpoints.keys()],
-      });
+      // 生存確認だけを返す。エンドポイントの id は並べない。運用者は
+      // 自分で設定した id を知っているので要らないが、外から見る側には
+      // どの /hook/:id が有効かの答えになってしまう。
+      return json({ name: "durable-webhook", status: "ok", endpoints: endpoints.size });
     }
 
     const [root, id, ...rest] = parts;
-    const endpoint = endpoints.get(id);
-    if (!endpoint) return json({ error: "unknown endpoint" }, 404);
 
     if (root === "hook" && request.method === "POST" && rest.length === 0) {
+      const endpoint = endpoints.get(id);
+      if (!endpoint) return json({ error: "unknown endpoint" }, 404);
       return handleHook(request, endpoint, store, ctx, now, env.FETCH || fetch);
     }
-    if (root === "dead-letters" && request.method === "GET" && rest.length === 0) {
-      return handleDeadLetters(endpoint, store, url);
-    }
-    if (root === "dead-letters" && request.method === "POST" && rest[1] === "replay") {
-      return handleReplay(endpoint, store, rest[0], ctx, now, env.FETCH || fetch);
+
+    // 退避の一覧と再送は運用者向け。送信元の署名では守れないので別の鍵で
+    // 塞ぐ。id を見る前に認証するのは、404 と 401 の違いから有効な id を
+    // 当てられないようにするため。
+    if (root === "dead-letters") {
+      const auth = checkAdmin(request, env);
+      if (!auth.ok) return json({ error: auth.error }, auth.status);
+
+      const endpoint = endpoints.get(id);
+      if (!endpoint) return json({ error: "unknown endpoint" }, 404);
+
+      if (request.method === "GET" && rest.length === 0) {
+        return handleDeadLetters(endpoint, store, url);
+      }
+      if (request.method === "POST" && rest[1] === "replay") {
+        return handleReplay(endpoint, store, rest[0], ctx, now, env.FETCH || fetch);
+      }
     }
 
     return json({ error: "not found" }, 404);

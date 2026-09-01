@@ -47,6 +47,7 @@ Cron sweeps pending deliveries and retries with growing backoff
   ↓
 GET  /dead-letters/:id          list what did not make it
 POST /dead-letters/:id/:did/replay   send it again
+     ^ both are operator routes, and require ADMIN_TOKEN
 ```
 
 ## Decisions worth explaining
@@ -71,6 +72,13 @@ straight to dead letters. `408` and `429` are the exceptions: those clear with t
 the same event twice, someone gets charged twice. The event id is taken from a header
 you configure, or from a hash of the body when the sender provides none.
 
+**Operator routes get their own key.** Listing dead letters and replaying them are
+things an operator does, and the sender's signing secret cannot protect them. Replay
+especially: reachable from outside, it lets anyone force a duplicate at the
+destination — the exact accident this tool exists to prevent. When `ADMIN_TOKEN` is
+unset those routes return `503` rather than opening. Nobody notices an endpoint that
+is open; everybody notices one that is broken.
+
 **Nothing is ever discarded.** Deliveries that exhaust their attempts are moved to
 dead letters and kept, with the body intact, so a human can look and decide. Deleting
 them would make the failure invisible, which is the one outcome worse than failing.
@@ -81,6 +89,7 @@ them would make the failure invisible, which is the one outcome worse than faili
 npm install
 npx wrangler kv namespace create WEBHOOKS   # put the id in wrangler.toml
 npx wrangler secret put ENDPOINTS
+npx wrangler secret put ADMIN_TOKEN         # for listing and replaying dead letters
 npx wrangler deploy
 ```
 
@@ -122,7 +131,9 @@ curl -X POST http://localhost:8787/hook/demo \
   -H 'x-request-id: evt_1' -d '{"hello":"world"}'
 # {"status":"duplicate","eventId":"evt_1"}
 
-curl http://localhost:8787/dead-letters/demo
+# dead letters — requires ADMIN_TOKEN
+curl http://localhost:8787/dead-letters/demo \
+  -H 'authorization: Bearer <ADMIN_TOKEN>'
 ```
 
 Point `targetUrl` at something that returns `500` and watch the delivery move through
