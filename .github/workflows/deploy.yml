@@ -1,0 +1,66 @@
+# main に入ったものを Cloudflare Workers へ配る。
+#
+# テストは deploy 側に書き写さず、test.yml をそのまま呼ぶ。書き写すと
+# 片方だけ直したときに、テストを通っていないものが配られる。
+#
+# 必要な Secret は 2 つ。どちらもリポジトリの Settings → Secrets に入れる。
+#   CLOUDFLARE_API_TOKEN    Workers の編集権限だけに絞ったトークン
+#   CLOUDFLARE_ACCOUNT_ID   配布先のアカウント
+#
+# ENDPOINTS と ADMIN_TOKEN は Cloudflare 側に置いたままでよい。
+# wrangler deploy は Secret を触らないので、配り直しても消えない。
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同時に 2 つ配らない。後から来た方は前が終わるまで待つ。
+# 打ち消し合うと、どちらが本番に載っているか分からなくなる。
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: test
+    # fork では Secret が無く必ず失敗するので、動かさない。
+    if: github.repository == 'lon-coeng/durable-webhook'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cloudflare へ配る
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # 配ったものが実際に応答するかまで見る。ここを省くと
+      # 「デプロイは成功したが動いていない」を成功として記録してしまう。
+      - name: 応答を確かめる
+        run: |
+          url=https://durable-webhook.lon-coeng.workers.dev/
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$url" || true)
+            if [ "$code" = "200" ] && grep -q '"status":"ok"' /tmp/body; then
+              echo "応答を確認しました"
+              cat /tmp/body
+              exit 0
+            fi
+            echo "まだ応答しません (HTTP $code)。再試行 $attempt/5"
+            sleep 10
+          done
+          echo "配布は成功しましたが、応答が確認できませんでした"
+          exit 1
