@@ -54,7 +54,9 @@ jobs:
           url=https://durable-webhook.lon-coeng.workers.dev/
           for attempt in 1 2 3 4 5; do
             code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$url" || true)
-            if [ "$code" = "200" ] && grep -q '"status":"ok"' /tmp/body; then
+            # 応答は整形された JSON なので、コロンの前後に空白が入る。
+            # 詰めた形で照合すると、届いていても一致しない。
+            if [ "$code" = "200" ] && grep -qE '"status"[[:space:]]*:[[:space:]]*"ok"' /tmp/body; then
               echo "応答を確認しました"
               cat /tmp/body
               exit 0

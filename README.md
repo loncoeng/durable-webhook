@@ -83,6 +83,16 @@ is open; everybody notices one that is broken.
 dead letters and kept, with the body intact, so a human can look and decide. Deleting
 them would make the failure invisible, which is the one outcome worse than failing.
 
+## Running
+
+```
+https://durable-webhook.lon-coeng.workers.dev
+```
+
+GitHub Actions ships whatever lands on `main` to Cloudflare — tests first, then a check that the deployed Worker actually answers ([deploy.yml](.github/workflows/deploy.yml)).
+
+`GET /` returns a liveness check and nothing else. `POST /hook/:id` needs a signature; listing and replaying dead letters needs `ADMIN_TOKEN`.
+
 ## Setup
 
 ```sh

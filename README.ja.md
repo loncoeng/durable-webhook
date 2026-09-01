@@ -62,6 +62,16 @@ POST /dead-letters/:id/:did/replay    もう一度送る
 
 **何も捨てません。** 試行を尽くした配送は、本文を保ったまま退避へ移します。人間が見て判断できるようにするためです。消してしまうと失敗が見えなくなり、それは失敗そのものより悪い結果です。
 
+## 稼働中
+
+```
+https://durable-webhook.lon-coeng.workers.dev
+```
+
+`main` に入ったものを GitHub Actions が Cloudflare へ配ります。テストを通ってから配り、配ったあとに実際の応答まで確認します（[deploy.yml](.github/workflows/deploy.yml)）。
+
+`GET /` は生存確認だけを返します。`POST /hook/:id` は署名が要り、退避の一覧と再送は `ADMIN_TOKEN` が要ります。
+
 ## 導入
 
 ```sh
