@@ -4,7 +4,7 @@
 
 *[English version](README.md)*
 
-**速く受け取って、しつこく届ける** Webhook リレーです。Cloudflare Workers 上で動きます。
+**すぐ受け取って、諦めずに届ける** Webhook リレーです。Cloudflare Workers 上で動きます。
 
 無料枠で運用できます。実行時の依存はありません。
 
