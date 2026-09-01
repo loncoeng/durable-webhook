@@ -1,3 +1,6 @@
 # ローカル実行用。wrangler dev がこれを読む。
 # 実際の値を書いたファイルは .gitignore で除外している。
 ENDPOINTS=[{"id":"demo","targetUrl":"https://example.com/receive","idHeaders":["x-request-id"]}]
+
+# 退避の一覧と再送に要る。未設定だとその2経路は 503 で止まる。
+ADMIN_TOKEN=local-dev-token
