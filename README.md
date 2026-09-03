@@ -42,7 +42,7 @@ POST /hook/:id
   (in the background) attempt delivery
   ↓  failed? leave it pending
   ↓
-Cron sweeps pending deliveries and retries with growing backoff
+Cron sweeps pending deliveries every five minutes, retrying with growing backoff
   ↓  out of attempts? move to dead letters — never discard
   ↓
 GET  /dead-letters/:id          list what did not make it
@@ -57,8 +57,14 @@ destination look like a failure to the sender, which starts the retry storm you 
 trying to avoid.
 
 **Retries live in Cron, not in the request.** A Worker has an execution limit. You
-cannot wait an hour inside one invocation. Pending deliveries go to KV; a scheduled
-job sweeps them.
+cannot wait an hour inside one invocation. Pending deliveries go to KV; a job scheduled
+every five minutes sweeps them.
+
+**That five minutes is set by the KV free tier, not by taste.** A KV list is capped at
+1,000 a day — **the scarcest operation on the free plan** (reads get 100,000). Sweeping
+every minute costs 1,440 a day with nobody visiting at all, and the day's retries stop
+once the cap is hit. The first delivery attempt happens the moment the webhook arrives,
+so a slower sweep delays no first delivery.
 
 **Backoff grows: 1m → 5m → 15m → 1h → 6h.** Even intervals are wrong in both
 directions. A momentary blip clears in a minute; an outage lasting hours does not
