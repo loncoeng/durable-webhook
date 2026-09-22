@@ -1,6 +1,6 @@
 # durable-webhook
 
-[![test](https://github.com/lon-coeng/durable-webhook/actions/workflows/test.yml/badge.svg)](https://github.com/lon-coeng/durable-webhook/actions/workflows/test.yml)
+[![test](https://github.com/loncoeng/durable-webhook/actions/workflows/test.yml/badge.svg)](https://github.com/loncoeng/durable-webhook/actions/workflows/test.yml)
 
 *[日本語版 / Japanese version](README.ja.md)*
 
@@ -92,7 +92,7 @@ them would make the failure invisible, which is the one outcome worse than faili
 ## Running
 
 ```
-https://durable-webhook.lon-coeng.workers.dev
+https://durable-webhook.loncoeng.workers.dev
 ```
 
 GitHub Actions ships whatever lands on `main` to Cloudflare — tests first, then a check that the deployed Worker actually answers ([deploy.yml](.github/workflows/deploy.yml)).
