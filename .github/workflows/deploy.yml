@@ -30,7 +30,7 @@ jobs:
   deploy:
     needs: test
     # fork では Secret が無く必ず失敗するので、動かさない。
-    if: github.repository == 'lon-coeng/durable-webhook'
+    if: github.repository == 'loncoeng/durable-webhook'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
       # 「デプロイは成功したが動いていない」を成功として記録してしまう。
       - name: 応答を確かめる
         run: |
-          url=https://durable-webhook.lon-coeng.workers.dev/
+          url=https://durable-webhook.loncoeng.workers.dev/
           for attempt in 1 2 3 4 5; do
             code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$url" || true)
             # 応答は整形された JSON なので、コロンの前後に空白が入る。
