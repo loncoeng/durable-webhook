@@ -51,7 +51,9 @@ jobs:
       # 「デプロイは成功したが動いていない」を成功として記録してしまう。
       - name: 応答を確かめる
         run: |
-          url=https://durable-webhook.loncoeng.workers.dev/
+          # The workers.dev subdomain is Cloudflare's, not GitHub's. It
+          # kept its hyphen when the GitHub account was renamed.
+          url=https://durable-webhook.lon-coeng.workers.dev/
           for attempt in 1 2 3 4 5; do
             code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$url" || true)
             # 応答は整形された JSON なので、コロンの前後に空白が入る。
