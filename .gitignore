@@ -1,5 +1,11 @@
 node_modules/
 .wrangler/
 .dev.vars
+
+# Which Cloudflare account this directory deploys to. wrangler has one login
+# for the whole machine and the directory tells it nothing, so without this a
+# deploy run here goes wherever that login points — which is somebody else's
+# account. Holds an identifier, not a credential, and is not committed anyway.
+.env
 *.log
 .DS_Store
