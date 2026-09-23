@@ -92,7 +92,7 @@ them would make the failure invisible, which is the one outcome worse than faili
 ## Running
 
 ```
-https://durable-webhook.lon-coeng.workers.dev
+https://durable-webhook.loncoeng.workers.dev
 ```
 
 GitHub Actions ships whatever lands on `main` to Cloudflare — tests first, then a check that the deployed Worker actually answers ([deploy.yml](.github/workflows/deploy.yml)).
