@@ -67,7 +67,7 @@ POST /dead-letters/:id/:did/replay    もう一度送る
 ## 稼働中
 
 ```
-https://durable-webhook.lon-coeng.workers.dev
+https://durable-webhook.loncoeng.workers.dev
 ```
 
 `main` に入ったものを GitHub Actions が Cloudflare へ配ります。テストを通ってから配り、配ったあとに実際の応答まで確認します（[deploy.yml](.github/workflows/deploy.yml)）。
