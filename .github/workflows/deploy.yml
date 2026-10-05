@@ -23,6 +23,12 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 
+# The token this job is given. Without this block it gets the repository's
+# default, which is wider than anything here needs: nothing writes back to the
+# repository, and a step that is compromised should not be able to.
+permissions:
+  contents: read
+
 jobs:
   test:
     uses: ./.github/workflows/test.yml
@@ -33,8 +39,8 @@ jobs:
     if: github.repository == 'loncoeng/durable-webhook'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
