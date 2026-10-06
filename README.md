@@ -2,8 +2,6 @@
 
 [![test](https://github.com/loncoeng/durable-webhook/actions/workflows/test.yml/badge.svg)](https://github.com/loncoeng/durable-webhook/actions/workflows/test.yml)
 
-*[日本語版 / Japanese version](README.ja.md)*
-
 A webhook relay on Cloudflare Workers that **accepts fast and delivers stubbornly.**
 
 Runs on the free tier. No dependencies at runtime.
