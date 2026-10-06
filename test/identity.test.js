@@ -1,7 +1,7 @@
-// 「同じイベントか」の判定に対する検査。
+// Tests for deciding whether two events are the same event.
 //
-// ここが崩れると、同じ支払い通知が2回転送されたり、逆に別々の
-// イベントが1つに潰れたりする。どちらも転送先で実害が出る。
+// Get this wrong and the same payment notification is forwarded twice, or two
+// separate events collapse into one. Both do real damage at the destination.
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -10,7 +10,7 @@ import { eventIdentity, hashBody, newDeliveryId } from "../src/identity.js";
 
 const headers = (obj) => new Headers(obj);
 
-test("指定したヘッダからイベントIDを取る", async () => {
+test("the event id comes from the configured header", async () => {
   const result = await eventIdentity(
     headers({ "x-github-delivery": "abc-123" }),
     "{}",
@@ -20,8 +20,8 @@ test("指定したヘッダからイベントIDを取る", async () => {
   assert.equal(result.source, "header");
 });
 
-test("ヘッダは指定した順に見る", async () => {
-  // 送信元によって使うヘッダが違う。優先順を設定で決められるようにしてある。
+test("headers are read in the order given", async () => {
+  // Which header to use differs by sender, so the order is configurable.
   const result = await eventIdentity(
     headers({ "x-second": "two", "x-first": "one" }),
     "{}",
@@ -30,7 +30,7 @@ test("ヘッダは指定した順に見る", async () => {
   assert.equal(result.id, "one");
 });
 
-test("空のヘッダは飛ばして次を見る", async () => {
+test("an empty header is skipped for the next one", async () => {
   const result = await eventIdentity(
     headers({ "x-first": "   ", "x-second": "two" }),
     "{}",
@@ -39,28 +39,28 @@ test("空のヘッダは飛ばして次を見る", async () => {
   assert.equal(result.id, "two");
 });
 
-test("ヘッダが無ければ本文のハッシュを使う", async () => {
+test("with no header, the body hash stands in", async () => {
   const body = '{"event":"ping"}';
   const result = await eventIdentity(headers({}), body, ["x-missing"]);
   assert.equal(result.source, "body-hash");
   assert.equal(result.id, await hashBody(body));
 });
 
-test("同じ本文からは同じハッシュが出る", async () => {
+test("the same body gives the same hash", async () => {
   assert.equal(await hashBody("same"), await hashBody("same"));
 });
 
-test("本文が違えばハッシュが変わる", async () => {
+test("a different body gives a different hash", async () => {
   assert.notEqual(await hashBody('{"a":1}'), await hashBody('{"a":2}'));
 });
 
-test("ハッシュは64文字の16進", async () => {
+test("the hash is 64 hex characters", async () => {
   assert.match(await hashBody("x"), /^[0-9a-f]{64}$/);
 });
 
-test("配送IDは毎回異なる", () => {
-  // イベントIDと違い、こちらは配送1件ごとに一意。
-  // 同じイベントを再送したときの区別に要る。
+test("every delivery id is different", () => {
+  // Unlike the event id, this one is unique per delivery. It is what tells two
+  // attempts at the same event apart.
   const ids = new Set([newDeliveryId(), newDeliveryId(), newDeliveryId()]);
   assert.equal(ids.size, 3);
 });

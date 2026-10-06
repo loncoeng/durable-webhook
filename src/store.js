@@ -1,16 +1,16 @@
-// KV への読み書きをここに閉じ込める。
+// Everything that reads or writes KV lives here.
 //
-// キーの組み立てを散らばらせない。あとで保存先を Queues や D1 に
-// 移すことになったとき、触るのがこのファイルだけで済む。
+// Key construction does not get scattered. If the storage ever moves to Queues
+// or D1, this is the only file that has to change.
 //
-// TTL を必ず付ける。付けないと、放置された配送待ちが KV に永久に
-// 積み上がる。退避だけ長めにしてあるのは、人間が気付くまでに
-// 時間がかかるため。
+// Every write gets a TTL. Without one, abandoned pending deliveries pile up in
+// KV forever. The dead letters get a longer one because noticing them takes a
+// person longer.
 
 export const TTL = {
-  seen: 24 * 60 * 60,        // 24時間。これを超える再送はまず来ない
-  pending: 7 * 24 * 60 * 60, // 7日。バックオフを尽くしても6時間強で終わる
-  dead: 30 * 24 * 60 * 60,   // 30日。人間が判断するまでの猶予
+  seen: 24 * 60 * 60,        // 24 hours; a retry later than that is unheard of
+  pending: 7 * 24 * 60 * 60, // 7 days; the backoff runs out after six and a bit hours
+  dead: 30 * 24 * 60 * 60,   // 30 days; how long a person gets to decide
 };
 
 const key = {
@@ -24,7 +24,7 @@ export class Store {
     this.kv = kv;
   }
 
-  // --- 重複排除 ---
+  // --- deduplication ---
 
   async hasSeen(endpoint, eventId) {
     return (await this.kv.get(key.seen(endpoint, eventId))) !== null;
@@ -36,7 +36,7 @@ export class Store {
     });
   }
 
-  // --- 配送待ち ---
+  // --- pending ---
 
   async putPending(endpoint, delivery) {
     await this.kv.put(
@@ -56,11 +56,11 @@ export class Store {
   }
 
   /**
-   * 配送待ちを列挙する。
+   * List the pending deliveries.
    *
-   * KV の list は1回で1000件までしか返さない。Cron の1回の実行で
-   * 全部を捌こうとせず、上限を設けて次回に回す。溜まっていても
-   * 少しずつ減らせればよい。
+   * A KV list returns at most a thousand keys at a time. Rather than trying to
+   * clear everything in one cron run, there is a limit and the rest waits for
+   * the next one. A backlog only has to shrink, not vanish.
    */
   async listPending(endpoint, limit = 100) {
     const { keys } = await this.kv.list({
@@ -75,7 +75,7 @@ export class Store {
     return found;
   }
 
-  // --- 退避 ---
+  // --- dead letters ---
 
   async putDead(endpoint, delivery) {
     await this.kv.put(

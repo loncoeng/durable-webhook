@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # deploy から呼ぶ。テストを通っていないものを配らないため、
-  # 同じ内容を deploy 側に書き写さずに再利用する。
+  # Called from deploy. Reused rather than copied over there, so that nothing
+  # gets shipped without having passed these.
   workflow_call:
 
 # The token this job is given. Without this block it gets the repository's
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node-version }}
-      # 依存は wrangler だけで、テストには要らない。
-      # 検査対象は外部サービスに触れない純粋な部分に絞ってある。
+      # The only dependency is wrangler, which the tests do not need. What is
+      # tested is the part that reaches no external service.
       - run: npm run check
       - run: npm test

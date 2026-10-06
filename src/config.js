@@ -1,27 +1,27 @@
-// エンドポイントの設定。
+// The endpoint configuration.
 //
-// 環境変数 ENDPOINTS に JSON で持たせる。転送先の URL や署名の
-// シークレットは Secrets に置くべきものなので、コードにも
-// wrangler.toml にも書かない。
+// Carried as JSON in the ENDPOINTS environment variable. Destination URLs and
+// signing secrets belong in Secrets, so they are written neither here nor in
+// wrangler.toml.
 //
-// 起動時に検証して、壊れていれば早く落とす。設定の誤りに気付くのが
-// 「Webhook が届かない」という形になるのは最悪で、そのときには
-// もうイベントを取りこぼしている。
+// It is validated on load, and a broken configuration fails immediately. The
+// worst way to find out about a mistake in here is "the webhooks aren't
+// arriving", because by the time that gets noticed events have been lost.
 
 /**
  * @typedef {object} Endpoint
- * @property {string}   id         URL の一部になる。/hook/:id
- * @property {string}   targetUrl  転送先
- * @property {string=}  secret     HMAC の鍵。無ければ署名検証をしない
- * @property {string=}  signatureHeader 署名が入るヘッダ名
- * @property {string[]=} idHeaders  イベントIDを探すヘッダ（優先順）
- * @property {object=}  headers    転送時に付ける追加ヘッダ
+ * @property {string}   id         becomes part of the URL: /hook/:id
+ * @property {string}   targetUrl  where it is forwarded
+ * @property {string=}  secret     the HMAC key; without it, no signature check
+ * @property {string=}  signatureHeader the header the signature arrives in
+ * @property {string[]=} idHeaders  headers to look for the event id in, in order
+ * @property {object=}  headers    extra headers to add when forwarding
  */
 
 export class ConfigError extends Error {}
 
 /**
- * 環境変数から設定を読む。
+ * Read the configuration out of the environment.
  *
  * @param {object} env
  * @returns {Map<string, Endpoint>}
@@ -29,50 +29,50 @@ export class ConfigError extends Error {}
 export function loadEndpoints(env) {
   const raw = env?.ENDPOINTS;
   if (!raw) {
-    throw new ConfigError("ENDPOINTS が設定されていない");
+    throw new ConfigError("ENDPOINTS is not set");
   }
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new ConfigError(`ENDPOINTS が JSON として読めない: ${error.message}`);
+    throw new ConfigError(`ENDPOINTS is not readable as JSON: ${error.message}`);
   }
 
   if (!Array.isArray(parsed)) {
-    throw new ConfigError("ENDPOINTS は配列でなければならない");
+    throw new ConfigError("ENDPOINTS must be an array");
   }
 
   const map = new Map();
   for (const [index, item] of parsed.entries()) {
     const where = `ENDPOINTS[${index}]`;
     if (!item || typeof item !== "object") {
-      throw new ConfigError(`${where} がオブジェクトでない`);
+      throw new ConfigError(`${where} is not an object`);
     }
     if (!item.id || typeof item.id !== "string") {
-      throw new ConfigError(`${where}.id が無い`);
+      throw new ConfigError(`${where}.id is missing`);
     }
-    // id は URL に入る。パス区切りや空白が混ざると経路が壊れる。
+    // The id goes into a URL. A path separator or a space in it breaks routing.
     if (!/^[A-Za-z0-9_-]+$/.test(item.id)) {
-      throw new ConfigError(`${where}.id に使えるのは英数字とハイフンとアンダースコアだけ: ${item.id}`);
+      throw new ConfigError(`${where}.id may only contain letters, digits, hyphens and underscores: ${item.id}`);
     }
     if (map.has(item.id)) {
-      throw new ConfigError(`${where}.id が重複している: ${item.id}`);
+      throw new ConfigError(`${where}.id is a duplicate: ${item.id}`);
     }
     if (!item.targetUrl || typeof item.targetUrl !== "string") {
-      throw new ConfigError(`${where}.targetUrl が無い`);
+      throw new ConfigError(`${where}.targetUrl is missing`);
     }
     try {
       const url = new URL(item.targetUrl);
       if (url.protocol !== "https:" && url.protocol !== "http:") {
-        throw new Error("http または https でない");
+        throw new Error("not http or https");
       }
     } catch (error) {
-      throw new ConfigError(`${where}.targetUrl が URL として読めない: ${error.message}`);
+      throw new ConfigError(`${where}.targetUrl is not readable as a URL: ${error.message}`);
     }
-    // 署名の鍵があるのにヘッダ名が無いと、どこを見ればよいか決まらない。
+    // A signing key with no header name leaves nowhere to look for the signature.
     if (item.secret && !item.signatureHeader) {
-      throw new ConfigError(`${where}: secret があるなら signatureHeader も要る`);
+      throw new ConfigError(`${where}: a secret needs a signatureHeader as well`);
     }
 
     map.set(item.id, {
@@ -86,7 +86,7 @@ export function loadEndpoints(env) {
   }
 
   if (map.size === 0) {
-    throw new ConfigError("ENDPOINTS が空");
+    throw new ConfigError("ENDPOINTS is empty");
   }
   return map;
 }

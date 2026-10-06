@@ -2,35 +2,34 @@ name = "durable-webhook"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
-# <worker名>.<サブドメイン>.workers.dev で公開する。既定でも有効だが、
-# 明示しないとデプロイのたびに警告が出る。
+# Served at <worker>.<subdomain>.workers.dev. On by default, but leaving it
+# implicit means a warning on every deploy.
 workers_dev = true
 
-# デプロイごとにバージョン専用の公開 URL が作られる機能。開発中に
-# 版を比べるためのもので、このプロジェクトでは使わない。公開される
-# URL を無用に増やさないため無効にする。
+# Per-deploy preview URLs, for comparing versions during development. Unused
+# here, and off so that there are no more published URLs than necessary.
 preview_urls = false
 
-# 配送待ちを掃いて再試行する。実際に配送するのはバックオフの期限が来た
-# ものだけで、空振りは KV の list 1 回で終わる。
+# Sweep the pending deliveries and retry them. Only the ones whose backoff has
+# elapsed are actually sent; an empty sweep costs one KV list and nothing else.
 #
-# 間隔を 5 分にしているのは KV の無料枠の都合。list は 1 日 1,000 回までで、
-# **無料枠で最も少ない操作**である (読み取りは 100,000 回)。1 分ごとに回すと
-# 訪問者がゼロでも 1 日 1,440 回になり、上限を超えた時点でその日の再試行が
-# 止まる。5 分なら 288 回で、エンドポイントを 3 つ持っても収まる。
+# Five minutes because of the KV free tier. list is metered at 1,000 a day and
+# is **the smallest allowance on the tier** (reads get 100,000). Sweeping every
+# minute is 1,440 a day with no visitors at all, and from the moment that is
+# crossed the day's retries stop.  288 a day leaves room for three endpoints.
 #
-# 1 回目の配送は受け取った時点で waitUntil から試すので、ここが遅くても
-# 最初の配送は遅れない。効くのは再試行の粒度だけで、初回の再試行が
-# 1 分後ではなく 1〜5 分後になる。
+# The first delivery is attempted from waitUntil the moment the event arrives,
+# so a slow sweep does not delay it. What this costs is retry granularity: the
+# first retry lands 1–5 minutes later rather than exactly 1.
 [triggers]
 crons = ["*/5 * * * *"]
 
-# 受け取り・配送待ち・退避をここに置く。
-# 下の id はこのリポジトリの作者の名前空間。自分で動かすときは
-# wrangler kv namespace create WEBHOOKS で作り直して差し替える。
+# Holds what has been received, what is pending, and the dead letters.
+# The id below is this author's namespace. To run your own, create one with
+# wrangler kv namespace create WEBHOOKS and put it here instead.
 [[kv_namespaces]]
 binding = "WEBHOOKS"
 id = "e69f051a37e242c3b4fe6f0fa7a116ef"
 
-# ENDPOINTS は転送先の URL と署名の鍵を含む。ここには書かず、
-# wrangler secret put ENDPOINTS で登録する。
+# ENDPOINTS contains destination URLs and signing keys. It does not go here;
+# register it with wrangler secret put ENDPOINTS.

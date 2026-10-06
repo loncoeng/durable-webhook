@@ -1,11 +1,12 @@
-// Worker の入口。HTTP と Cron の2つの経路がある。
+// The Worker's entry point. Two ways in: HTTP and cron.
 //
-//   fetch     Webhook を受け取る / 退避の一覧と再送（要 ADMIN_TOKEN）
-//   scheduled 配送待ちを掃いて再試行する
+//   fetch     receives webhooks, lists and replays dead letters (ADMIN_TOKEN)
+//   scheduled sweeps the pending deliveries and retries them
 //
-// 受け取りの経路では、送信元への応答を何よりも優先する。署名検証と
-// KV への書き込みだけを待ち、配送は waitUntil に逃がす。転送先が
-// 遅くても、送信元には常に速く 200 が返る。
+// On the receiving path the response to the sender comes before anything else.
+// Only the signature check and the write to KV are awaited; the delivery goes
+// to waitUntil. However slow the destination is, the sender always gets a
+// prompt 200.
 
 import { checkAdmin } from "./admin.js";
 import { isDue } from "./backoff.js";
@@ -21,7 +22,7 @@ const json = (body, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8" },
   });
 
-/** 配送の結果を反映する。decideNext の判断をそのまま実行するだけ。 */
+/** Write down what happened — nothing but carrying out decideNext's decision. */
 async function applyOutcome(store, endpointId, decision) {
   const { action, delivery } = decision;
   if (action === "done") {
@@ -34,7 +35,7 @@ async function applyOutcome(store, endpointId, decision) {
   }
 }
 
-/** 1件を配送し、結果を反映する。 */
+/** Deliver one, and record the outcome. */
 async function deliverOnce(store, endpoint, delivery, now, fetchImpl) {
   const result = await attemptDelivery(
     delivery,
@@ -52,7 +53,8 @@ async function handleHook(request, endpoint, store, ctx, now, fetchImpl) {
   if (endpoint.secret) {
     const provided = request.headers.get(endpoint.signatureHeader);
     if (!(await verify(endpoint.secret, body, provided))) {
-      // 署名が合わないものは受け取らない。ここだけは 401 を返す。
+      // A signature that does not match is not accepted. This is the one place
+      // that answers 401.
       return json({ error: "signature verification failed" }, 401);
     }
   }
@@ -63,8 +65,8 @@ async function handleHook(request, endpoint, store, ctx, now, fetchImpl) {
     endpoint.idHeaders,
   );
 
-  // 既に受け取っているなら、そこで終わる。送信元には成功を返す。
-  // ここで 200 を返さないと、送信元は再送を続ける。
+  // Already have it: stop here, and tell the sender it went fine. Anything
+  // other than a 200 and the sender keeps retrying.
   if (await store.hasSeen(endpoint.id, eventId)) {
     return json({ status: "duplicate", eventId });
   }
@@ -77,11 +79,13 @@ async function handleHook(request, endpoint, store, ctx, now, fetchImpl) {
     receivedAt: now,
   });
 
-  // 配送待ちとして記録してから応答する。ここまでが「落とさない」の担保。
+  // Recorded as pending before responding. That write is what "nothing gets
+  // dropped" actually rests on.
   await store.putPending(endpoint.id, delivery);
   await store.markSeen(endpoint.id, eventId, delivery.deliveryId);
 
-  // 1回目の配送は応答を待たせない。成功しても失敗しても 202 を返す。
+  // The first attempt does not hold up the response. Success or failure, the
+  // answer is 202.
   ctx.waitUntil(deliverOnce(store, endpoint, delivery, now, fetchImpl));
 
   return json(
@@ -96,7 +100,7 @@ async function handleDeadLetters(endpoint, store, url) {
   return json({
     endpoint: endpoint.id,
     count: items.length,
-    // 本文は大きいことがあるので一覧では返さない。個別に取りに来てもらう。
+    // Bodies can be large, so the list leaves them out. Fetch one to see it.
     items: items.map(({ body, ...rest }) => ({ ...rest, bodyBytes: body?.length ?? 0 })),
   });
 }
@@ -105,8 +109,9 @@ async function handleReplay(endpoint, store, deliveryId, ctx, now, fetchImpl) {
   const dead = await store.getDead(endpoint.id, deliveryId);
   if (!dead) return json({ error: "not found" }, 404);
 
-  // 試行回数を戻して配送待ちへ返す。退避したまま消さないのは、
-  // 再送が失敗したときに元が残っていないと困るため。
+  // Put the attempt count back and return it to pending. The dead letter stays
+  // where it is: if the replay fails too, having lost the original would be
+  // the worse outcome.
   const revived = { ...dead, attempts: 0, nextAt: now, lastError: null, lastStatus: null };
   await store.putPending(endpoint.id, revived);
   ctx.waitUntil(
@@ -124,7 +129,7 @@ export default {
       endpoints = loadEndpoints(env);
     } catch (error) {
       if (error instanceof ConfigError) {
-        return json({ error: `設定エラー: ${error.message}` }, 500);
+        return json({ error: `configuration error: ${error.message}` }, 500);
       }
       throw error;
     }
@@ -135,9 +140,9 @@ export default {
     const now = Date.now();
 
     if (parts.length === 0) {
-      // 生存確認だけを返す。エンドポイントの id は並べない。運用者は
-      // 自分で設定した id を知っているので要らないが、外から見る側には
-      // どの /hook/:id が有効かの答えになってしまう。
+      // Proof of life, and nothing else. The endpoint ids are not listed:
+      // whoever operates this configured them and does not need telling, and
+      // to anyone outside the list would answer which /hook/:id are live.
       return json({ name: "durable-webhook", status: "ok", endpoints: endpoints.size });
     }
 
@@ -149,9 +154,10 @@ export default {
       return handleHook(request, endpoint, store, ctx, now, env.FETCH || fetch);
     }
 
-    // 退避の一覧と再送は運用者向け。送信元の署名では守れないので別の鍵で
-    // 塞ぐ。id を見る前に認証するのは、404 と 401 の違いから有効な id を
-    // 当てられないようにするため。
+    // Listing and replaying are for whoever operates this, and a sender's
+    // signature cannot protect them, so they get a key of their own. The
+    // authentication happens before the id is looked at, so that the
+    // difference between 404 and 401 cannot be used to guess a live id.
     if (root === "dead-letters") {
       const auth = checkAdmin(request, env);
       if (!auth.ok) return json({ error: auth.error }, auth.status);
@@ -177,7 +183,8 @@ export default {
 
     for (const endpoint of endpoints.values()) {
       const pending = await store.listPending(endpoint.id);
-      // 期限が来ているものだけを拾う。まだ待つべきものは触らない。
+      // Only the ones that are due. The rest are still waiting, and are left
+      // alone.
       const due = pending.filter((p) => isDue(p, now));
       for (const delivery of due) {
         ctx.waitUntil(deliverOnce(store, endpoint, delivery, now, env.FETCH || fetch));

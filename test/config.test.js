@@ -1,7 +1,7 @@
-// 設定の読み込みに対する検査。
+// Tests for loading the configuration.
 //
-// 設定の誤りに気付くのが「Webhook が届かない」という形になるのは最悪で、
-// そのときにはもうイベントを取りこぼしている。起動時に落とす。
+// The worst way to find out about a mistake in here is "the webhooks aren't
+// arriving", because by then events have already been lost. It fails on load.
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -10,7 +10,7 @@ import { ConfigError, loadEndpoints } from "../src/config.js";
 
 const env = (endpoints) => ({ ENDPOINTS: JSON.stringify(endpoints) });
 
-test("最小の設定を読める", () => {
+test("the smallest configuration loads", () => {
   const map = loadEndpoints(env([{ id: "line", targetUrl: "https://app.example.com/in" }]));
   assert.equal(map.size, 1);
   assert.equal(map.get("line").targetUrl, "https://app.example.com/in");
@@ -18,46 +18,48 @@ test("最小の設定を読める", () => {
   assert.deepEqual(map.get("line").idHeaders, []);
 });
 
-test("省略した項目に既定値が入る", () => {
+test("what is left out gets a default", () => {
   const endpoint = loadEndpoints(env([{ id: "a", targetUrl: "https://e.example.com" }])).get("a");
   assert.deepEqual(endpoint.headers, {});
   assert.equal(endpoint.signatureHeader, null);
 });
 
-test("ENDPOINTS が無ければ落とす", () => {
+test("no ENDPOINTS at all is a failure", () => {
   assert.throws(() => loadEndpoints({}), ConfigError);
 });
 
-test("JSON として壊れていれば落とす", () => {
+test("ENDPOINTS that is not JSON is a failure", () => {
   assert.throws(() => loadEndpoints({ ENDPOINTS: "{ broken" }), ConfigError);
 });
 
-test("配列でなければ落とす", () => {
+test("ENDPOINTS that is not an array is a failure", () => {
   assert.throws(() => loadEndpoints({ ENDPOINTS: '{"id":"a"}' }), ConfigError);
 });
 
-test("空の配列は落とす", () => {
-  // 設定した気になって1件も無い、という事故を防ぐ。
+test("an empty array is a failure", () => {
+  // Guards against the accident of feeling configured with nothing configured.
   assert.throws(() => loadEndpoints(env([])), ConfigError);
 });
 
-test("id が無ければ落とす", () => {
+test("a missing id is a failure", () => {
   assert.throws(() => loadEndpoints(env([{ targetUrl: "https://e.example.com" }])), ConfigError);
 });
 
-test("id に URL で困る文字があれば落とす", () => {
-  // id はパスに入る。区切りや空白が混ざると経路が壊れる。
+test("an id with characters that break a URL is a failure", () => {
+  // The id goes into the path. A separator or a space in it breaks routing.
+  // 日本語 is here as the non-ASCII case, and stays in Japanese because that
+  // is the input, not a sentence about it.
   for (const id of ["a/b", "a b", "a?b", "日本語", ""]) {
     assert.throws(
       () => loadEndpoints(env([{ id, targetUrl: "https://e.example.com" }])),
       ConfigError,
-      `id=${JSON.stringify(id)} が通ってしまった`,
+      `id=${JSON.stringify(id)} was accepted`,
     );
   }
 });
 
-test("id が重複していれば落とす", () => {
-  // 後勝ちで黙って上書きすると、片方の Webhook が消える。
+test("a duplicate id is a failure", () => {
+  // Silently letting the last one win would make one of the webhooks vanish.
   assert.throws(
     () => loadEndpoints(env([
       { id: "a", targetUrl: "https://one.example.com" },
@@ -67,31 +69,31 @@ test("id が重複していれば落とす", () => {
   );
 });
 
-test("targetUrl が無ければ落とす", () => {
+test("a missing targetUrl is a failure", () => {
   assert.throws(() => loadEndpoints(env([{ id: "a" }])), ConfigError);
 });
 
-test("targetUrl が URL でなければ落とす", () => {
+test("a targetUrl that is not a URL is a failure", () => {
   assert.throws(() => loadEndpoints(env([{ id: "a", targetUrl: "not a url" }])), ConfigError);
 });
 
-test("http と https 以外は落とす", () => {
+test("anything other than http or https is a failure", () => {
   assert.throws(
     () => loadEndpoints(env([{ id: "a", targetUrl: "ftp://e.example.com" }])),
     ConfigError,
   );
 });
 
-test("secret があるのに signatureHeader が無ければ落とす", () => {
-  // どのヘッダを見ればよいか決まらない。黙って検証を飛ばすと、
-  // 検証しているつもりで素通しになる。
+test("a secret without a signatureHeader is a failure", () => {
+  // There would be nowhere to look for the signature. Skipping the check
+  // quietly means passing everything through while believing it is checked.
   assert.throws(
     () => loadEndpoints(env([{ id: "a", targetUrl: "https://e.example.com", secret: "s" }])),
     ConfigError,
   );
 });
 
-test("secret と signatureHeader が揃っていれば通る", () => {
+test("a secret with a signatureHeader is accepted", () => {
   const endpoint = loadEndpoints(env([{
     id: "gh",
     targetUrl: "https://e.example.com",

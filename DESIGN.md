@@ -1,165 +1,182 @@
-# 設計メモ
+# Design notes
 
-実装に入る前に、何を作るかを決めておく。あとから読んで判断の理由が
-分かるように、選ばなかった案とその理由も残す。
+Written before the implementation, to settle what was being built. The options
+that were turned down are here too, with the reason — otherwise the only thing
+left of a decision is the thing that was decided.
 
-## 解く問題
+## The problem
 
-Webhook の送信元（LINE、Stripe、GitHub など）は、数秒で `200` が返らないと
-失敗とみなして再送する。一方、転送先のアプリは落ちることがある。デプロイ中の
-30秒、DB の一時的な不調、その他。
+A webhook sender — LINE, Stripe, GitHub — treats anything slower than a few
+seconds as a failure and sends it again. The app on the other end, meanwhile,
+goes down: thirty seconds during a deploy, a database that is briefly unwell,
+and so on.
 
-このとき起きること。
+What happens then:
 
 ```
-送信元 → アプリ（落ちている）
+sender → app (down)
          ↓
-       500 が返る、あるいは無応答
+       500, or nothing at all
          ↓
-       送信元は数回再送して、諦める
+       the sender retries a few times and gives up
          ↓
-       そのイベントは永久に失われる
+       that event is gone for good
 ```
 
-**受け取ること**と**届けること**を分ければ解決する。受け取りは常に成功させ、
-配送は非同期にして、失敗したら後で再試行する。
+Separating **accepting** from **delivering** fixes it. Accepting always
+succeeds; delivery happens afterwards, and is retried when it fails.
 
-## 全体の流れ
+## The shape of it
 
 ```
 POST /hook/:id
   ↓
-署名を検証（設定されていれば）
+check the signature (if one is configured)
   ↓
-イベントIDで重複を確認 → 既知なら 200 を返して終了
+check the event id against what has been seen → known: 200, done
   ↓
-配送予定として KV に保存
+write it to KV as a delivery to make
   ↓
-即座に 200 を返す                    ← ここまでを数十ミリ秒で
+return 200 immediately              ← everything above, in tens of milliseconds
   ↓
-（ctx.waitUntil で）1回目の配送を試みる
+(from ctx.waitUntil) try the first delivery
   ↓
-失敗したら「保留」として残す
+on failure, leave it pending
   ↓
-Cron が定期的に保留を掃き、指数バックオフで再試行
+cron sweeps the pending ones and retries with exponential backoff
   ↓
-上限を超えたら「退避」へ移す（消さない）
+past the last attempt, move it to the dead letters — never drop it
   ↓
-GET /dead-letters で一覧、POST /dead-letters/:id/replay で再送
-（この2つは運用者向けなので ADMIN_TOKEN で塞ぐ）
+GET /dead-letters lists them, POST /dead-letters/:id/replay sends one again
+(both are for whoever operates this, so ADMIN_TOKEN closes them)
 ```
 
-## 決めたこと
+## Decisions
 
-### 受け取りと配送を分ける
+### Accepting and delivering are different things
 
-送信元に返す `200` は「受け取った」であって「届けた」ではない。ここを混ぜると、
-転送先が遅いだけで送信元に再送させることになる。
+The `200` the sender gets means "accepted", not "delivered". Conflate the two
+and a slow destination makes the sender retry, which is the problem this is
+supposed to solve.
 
-### 応答は必ず速く返す
+### The response is always fast
 
-署名検証と KV への書き込みだけを同期で行い、配送は `ctx.waitUntil` に逃がす。
-1回目の配送が成功しても失敗しても、送信元への応答は変わらない。
+Only the signature check and the write to KV happen before the response. The
+delivery goes to `ctx.waitUntil`. Whether that first attempt succeeds or fails,
+the sender sees the same thing.
 
-### 再試行は Cron に任せる
+### Retries belong to cron, not to the request
 
-Worker には実行時間の上限がある。「30秒待って再試行、次は60秒」を1回の実行の
-中でやることはできない。保留を KV に置き、Cron が掃く形にする。
+A Worker has a wall-clock limit. "Wait thirty seconds and try again, then
+sixty" cannot happen inside one invocation. The pending deliveries live in KV
+and cron sweeps them.
 
-バックオフは 1分 → 5分 → 15分 → 1時間 → 6時間（計5回）。**等間隔にしない**のは、
-一時的な不調なら早い再試行で拾え、長期の障害なら間隔を空けた方が無駄がないため。
+The backoff is 1 minute → 5 → 15 → 1 hour → 6 hours, five attempts. It is
+**deliberately not evenly spaced**: a brief wobble is caught by an early retry,
+and a long outage is not helped by hammering it.
 
-### 掃く間隔は 5 分。KV の無料枠が決めている
+### The sweep runs every 5 minutes, because the KV free tier says so
 
-**最初は 1 分ごとにしていた。これは誤りだった。**
+**It was every minute to begin with. That was wrong.**
 
-KV の無料枠は読み取りが 1 日 100,000 回あるので list も同程度に安いと考えたが、
-**list は書き込みと同じ 1 日 1,000 回**で、無料枠で最も少ない操作である。
-1 分ごとに掃くと、訪問者がゼロでも 1 日 1,440 回になり上限を超える。
-しかも KV の上限は絞るのではなく**エラーを返す**ので、超えた時点でその日の
-再試行が止まる。**何も届かないのに、誰にも分からない状態**になる。
+The KV free tier allows 100,000 reads a day, so list looked like it would be
+cheap too. It is not: **list is metered with writes, at 1,000 a day** — the
+smallest allowance of any operation on the tier. Sweeping every minute is
+1,440 a day with no visitors at all, which is over the line.
 
-5 分なら 288 回で、エンドポイントを 3 つ持っても収まる。失うのは再試行の
-粒度だけで、1 回目の配送は受け取った時点で `waitUntil` から試すため、
-初回の配送は遅れない。バックオフの最初の 1 分が、実際には 1〜5 分になる。
+And KV does not throttle when you cross it. It **returns an error**, so from
+that moment the day's retries stop. **Nothing gets delivered and nobody finds
+out.**
 
-**無料枠で動かすと決めたなら、一番少ない操作を数えるところから始めること。**
-平均的な上限を見て安心すると、こうなる。
+Five minutes is 288 a day, with room for three endpoints. What that costs is
+retry granularity and nothing else: the first delivery is attempted from
+`waitUntil` the moment the event arrives, so it is not delayed — the first
+backoff step is just 1–5 minutes rather than exactly 1.
 
-### 同じイベントを二度配送しない
+**If the plan is to run on a free tier, start by counting the operation with
+the smallest allowance.** Reading the headline limit and feeling reassured is
+how this one happened.
 
-送信元は再送してくる。転送先が二重に処理すると困る（課金が2回、通知が2回）。
-イベントIDを KV に記録し、既知なら受け取った時点で終わる。
+### The same event is not delivered twice
 
-イベントIDの取り方は設定で決める。ヘッダから取る場合が多い
-（`X-GitHub-Delivery`、`Stripe-Signature` の一部、`X-Line-Delivery` など）。
-取れなければ本文のハッシュで代用する。
+Senders retry, and a destination that processes an event twice charges twice or
+notifies twice. The event id goes into KV, and a known id ends the request
+where it started.
 
-### 諦めたものを消さない
+Where the id comes from is configured per endpoint. Usually a header —
+`X-GitHub-Delivery`, part of `Stripe-Signature`, `X-Line-Delivery`. Where there
+is nothing to read, a hash of the body stands in.
 
-再試行を尽くしたものを黙って捨てると、そのイベントは失われる。**退避して、
-後から人間が再送できる**ようにする。捨てるかどうかは人間が決める。
+### Nothing that was given up on is deleted
 
-これは `gui-report-automation` で「削除ではなく隔離」を選んだのと同じ判断。
+Quietly discarding an event that ran out of retries loses it. It goes to the
+**dead letters instead, where a person can send it again**. Whether to throw it
+away is a decision for a person.
 
-### 署名は検証するが、必須にしない
+Same call as `gui-report-automation`, which quarantines rather than deletes.
 
-送信元が HMAC 署名を付けるなら検証する。付けない送信元もあるので、
-設定されていないときは素通しする。**検証を必須にすると使えない相手が出る**。
+### Signatures are checked, but not required
 
-### 管理系の鍵は、逆に必須にする
+A sender that signs with HMAC gets checked. Plenty of senders do not sign at
+all, so an endpoint with no secret configured passes everything through.
+**Requiring a signature would mean some senders could not be used.**
 
-退避の一覧と再送は運用者が叩く経路で、送信元の署名では守れない。鍵の
-持ち主が違う。別に `ADMIN_TOKEN` を用意して、**未設定なら素通しではなく
-`503` で止める**。
+### The admin key is required, which is the opposite
 
-送信元の署名と扱いを逆にしたのは、未設定だったときの結末が違うため。
-署名が無いのは相手の都合で、そのぶん受け取れる送信元が増える。一方
-管理系が開いていると、再送を外から叩かれて転送先で二重処理が起きる。
-**このツールが防ぐために作られた事故を、外から起こせることになる**。
+Listing and replaying dead letters is a path an operator uses, and a sender's
+signature cannot protect it — the key belongs to someone else entirely. That is
+what `ADMIN_TOKEN` is for, and with it **unset the answer is `503`, not "come
+in"**.
 
-開いていることには誰も気付けないが、動かないことにはすぐ気付く。
-気付ける側に倒す。
+The two are handled in opposite ways because being unset ends differently. A
+missing sender signature is the sender's business, and accepting it widens what
+can be received. An open admin path lets anyone outside trigger a replay, and
+a replay makes the destination process an event twice. **It would mean the
+accident this tool exists to prevent could be caused from outside it.**
 
-## 選ばなかったもの
+Nobody notices an open door. Everybody notices a closed one. Fail towards the
+one that gets noticed.
 
-**Cloudflare Queues を使う**
+## Turned down
 
-キューは本来この用途に適している。ただし**有料プランが要る**。無料枠で動くことを
-条件にしたので、KV と Cron で代用した。実運用で規模が出るなら Queues に
-移すべきで、その旨は README に書く。
+**Cloudflare Queues**
 
-**Durable Objects で順序を保証する**
+A queue is the right tool for this. It also **needs a paid plan**, and running
+on the free tier was a condition, so KV and cron stand in for one. At any real
+volume Queues is the move, and the README says so.
 
-配送順序を守るなら Durable Objects が要る。ただし今回の主題は「落とさない」で
-あって「順序を守る」ではない。**問題を広げると完成しない**ので範囲外にした。
+**Durable Objects, for ordering**
 
-**転送先を複数にする（fan-out）**
+Keeping deliveries in order needs Durable Objects. But the subject here is not
+dropping events, not ordering them. **Widening the problem is how it ends up
+unfinished**, so ordering is out of scope.
 
-有用だが、再試行の状態を転送先ごとに持つ必要があり、複雑さが跳ねる。
-1対1に絞る。
+**Fan-out to several destinations**
 
-## 保存するもの（KV）
+Useful, and it means holding retry state per destination, which is where the
+complexity jumps. One to one.
 
-| キー | 内容 | TTL |
+## What is stored (KV)
+
+| Key | Holds | TTL |
 |---|---|---|
-| `seen:<endpoint>:<eventId>` | 重複排除の印 | 24時間 |
-| `pending:<endpoint>:<deliveryId>` | 配送待ち。試行回数と次回時刻を持つ | 7日 |
-| `dead:<endpoint>:<deliveryId>` | 退避。人間が判断するまで残す | 30日 |
+| `seen:<endpoint>:<eventId>` | the dedupe mark | 24 hours |
+| `pending:<endpoint>:<deliveryId>` | a delivery to make, with its attempt count and next time | 7 days |
+| `dead:<endpoint>:<deliveryId>` | given up on, kept until a person decides | 30 days |
 
-TTL を付けるのは、放置しても KV が膨らみ続けないようにするため。
-退避だけ長めなのは、気付くまでに時間がかかるため。
+The TTLs are there so that neglect does not grow KV without bound. The dead
+letters get longer because noticing them takes longer.
 
-## 検査する範囲
+## What is tested
 
-外部サービスに触れない部分をテストする。
+Everything that does not reach an external service.
 
-- バックオフの計算（試行回数から次回時刻）
-- 重複排除の判定
-- 署名検証（HMAC-SHA256）
-- 管理系の認証（未設定のとき閉じることを含む）
-- 状態遷移（受け取り → 配送待ち → 成功 / 退避）
-- 設定の読み込みと検証
+- the backoff calculation (attempt count → next time)
+- the dedupe decision
+- signature verification (HMAC-SHA256)
+- admin authentication, including that it closes when unconfigured
+- the state transitions (accepted → pending → delivered / dead)
+- loading and validating configuration
 
-`fetch` はスタブに差し替える。実際の HTTP は Cloudflare の責任範囲で、
-そこを検査しても得るものがない。
+`fetch` is replaced with a stub. The actual HTTP is Cloudflare's to get right,
+and there is nothing to learn from testing it here.

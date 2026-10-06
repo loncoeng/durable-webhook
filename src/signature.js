@@ -1,15 +1,17 @@
-// 送信元が本物かを HMAC-SHA256 で確かめる。
+// Establishing that the sender is who it says it is, with HMAC-SHA256.
 //
-// 検証は必須にしない。署名を付けない送信元があるためで、必須にすると
-// そういう相手を扱えなくなる。設定されているときだけ検証する。
+// Verification is not required. Some senders do not sign at all, and requiring
+// it would mean those senders could not be used. It happens only where a
+// secret is configured.
 //
-// 比較には定数時間の関数を使う。素朴な === だと、一致した文字数によって
-// 処理時間が変わり、そこから正しい署名を1文字ずつ推測できてしまう。
+// The comparison is constant-time. A plain === takes a different amount of
+// time depending on how many characters matched, and that is enough to guess a
+// valid signature one character at a time.
 
 const encoder = new TextEncoder();
 
 /**
- * 本文の HMAC-SHA256 を16進で返す。
+ * The HMAC-SHA256 of the body, in hex.
  *
  * @param {string} secret
  * @param {string} body
@@ -30,14 +32,15 @@ export async function sign(secret, body) {
 }
 
 /**
- * 長さと内容を、経過時間で差が出ない形で比べる。
+ * Compare length and contents without the elapsed time differing.
  *
- * 早期 return を書かないのが要点。長さが違う場合も最後まで回す。
+ * The point is the absence of an early return. Mismatched lengths still run to
+ * the end.
  */
 export function timingSafeEqual(a, b) {
   const left = encoder.encode(a ?? "");
   const right = encoder.encode(b ?? "");
-  // 長さの違いも結果に含める。ここで return すると長さが漏れる。
+  // The length difference goes into the result. Returning here would leak it.
   let diff = left.length ^ right.length;
   const max = Math.max(left.length, right.length);
   for (let i = 0; i < max; i += 1) {
@@ -47,13 +50,13 @@ export function timingSafeEqual(a, b) {
 }
 
 /**
- * 送られてきた署名が正しいか。
+ * Whether the signature that arrived is the right one.
  *
- * 送信元によって `sha256=` のような接頭辞を付けるものがあるので落とす。
+ * Some senders prefix it, as in `sha256=`, so the prefix comes off.
  *
  * @param {string} secret
  * @param {string} body
- * @param {string|null} provided ヘッダから取り出した署名
+ * @param {string|null} provided the signature as read from the header
  */
 export async function verify(secret, body, provided) {
   if (!provided) return false;

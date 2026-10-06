@@ -1,36 +1,38 @@
-// 管理系の経路（退避の一覧と再送）に対する認証。
+// Authentication for the admin paths: listing dead letters and replaying one.
 //
-// この2つは受け取りの経路と性格が違う。署名は「送信元が本物か」を
-// 確かめるもので、送信元しか鍵を持たない。一方こちらは運用者が叩く。
-// 送信元の鍵で守るわけにいかないので、別の鍵を用意する。
+// These two have a different character from the receiving path. A signature
+// establishes that the sender is who it says it is, and only the sender holds
+// that key. These paths are for whoever operates this, so the sender's key is
+// not available to protect them and they get a key of their own.
 //
-// 特に再送は、外から叩けると転送先で二重処理を起こせる。このツールが
-// 防ぐために作られた事故を、外から起こせることになる。
+// Replay in particular: reachable from outside, it can make the destination
+// process an event twice. It would mean the accident this tool exists to
+// prevent could be caused from outside it.
 
 import { timingSafeEqual } from "./signature.js";
 
 /**
- * 管理系の経路を許してよいか判定する。
+ * Decide whether an admin request may proceed.
  *
- * 通ってよければ null を返す。駄目なら理由を持った Response を返す。
+ * Returns null when it may. Otherwise a Response carrying the reason.
  *
- * ADMIN_TOKEN が未設定のときは通さない。設定し忘れた運用者に対して
- * 開いたまま動くより、動かない方がいい。開いていることには誰も
- * 気付けないが、動かないことにはすぐ気付く。
+ * With ADMIN_TOKEN unset, nothing gets through. For an operator who forgot to
+ * set it, not working beats working wide open: nobody notices an open door,
+ * everybody notices a closed one.
  */
 export function checkAdmin(request, env) {
   const expected = typeof env.ADMIN_TOKEN === "string" ? env.ADMIN_TOKEN.trim() : "";
-  if (!expected) return { ok: false, status: 503, error: "ADMIN_TOKEN が未設定" };
+  if (!expected) return { ok: false, status: 503, error: "ADMIN_TOKEN is not set" };
 
   const provided = extractToken(request.headers.get("authorization"));
-  if (!provided) return { ok: false, status: 401, error: "認証が必要" };
+  if (!provided) return { ok: false, status: 401, error: "authentication required" };
   if (!timingSafeEqual(provided, expected)) {
-    return { ok: false, status: 401, error: "認証に失敗" };
+    return { ok: false, status: 401, error: "authentication failed" };
   }
   return { ok: true };
 }
 
-/** "Bearer xxx" から xxx を取り出す。形式が違えば null。 */
+/** Pull xxx out of "Bearer xxx". Anything else is null. */
 function extractToken(header) {
   if (typeof header !== "string") return null;
   const match = header.trim().match(/^Bearer[ \t]+(.+)$/i);

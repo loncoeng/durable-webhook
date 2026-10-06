@@ -1,20 +1,20 @@
-// 「同じイベントかどうか」を決める。
+// What makes two events the same event.
 //
-// 送信元は再送してくる。転送先が二重に処理すると、課金が2回走ったり
-// 通知が2回飛んだりする。受け取った時点で弾くのが一番安全で、
-// そのためには「同じ」の定義が要る。
+// Senders retry. A destination that processes one twice charges twice, or
+// notifies twice. Rejecting it the moment it arrives is the safest place to do
+// it, and that needs a definition of "the same".
 //
-// 送信元がイベントIDを付けているならそれを使う。付けていない相手も
-// いるので、その場合は本文のハッシュで代用する。
+// Where the sender attaches an event id, that is the definition. Plenty of
+// senders attach nothing, and for those a hash of the body stands in.
 //
-// 本文ハッシュには弱点がある。中身が同じで意味が違う2つのイベント
-// （例: 同じ内容の「いいね」が別々に2回）を同一視してしまう。それでも、
-// 二重配送より取りこぼしの方がましな場面は多い。どちらを選ぶかは
-// 設定で決められるようにしてある。
+// The body hash has a weakness: two events with identical content but
+// different meaning — the same "like" sent twice, separately — are treated as
+// one. Even so, there are many situations where a duplicate delivery is worse
+// than a lost one. Which way to lean is configurable.
 
 const encoder = new TextEncoder();
 
-/** 本文の SHA-256 を16進で返す。 */
+/** The SHA-256 of the body, in hex. */
 export async function hashBody(body) {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(body));
   return [...new Uint8Array(digest)]
@@ -23,11 +23,11 @@ export async function hashBody(body) {
 }
 
 /**
- * このイベントを一意に指す文字列を決める。
+ * Settle on a string that identifies this event.
  *
  * @param {Headers} headers
  * @param {string} body
- * @param {string[]} idHeaders 優先順に見るヘッダ名
+ * @param {string[]} idHeaders header names to look at, in order
  * @returns {Promise<{ id: string, source: "header"|"body-hash" }>}
  */
 export async function eventIdentity(headers, body, idHeaders = []) {
@@ -40,7 +40,7 @@ export async function eventIdentity(headers, body, idHeaders = []) {
   return { id: await hashBody(body), source: "body-hash" };
 }
 
-/** 配送1件を指す ID。重複排除とは別で、こちらは常に一意。 */
+/** The id of one delivery. Unrelated to deduplication, and always unique. */
 export function newDeliveryId() {
   return crypto.randomUUID();
 }

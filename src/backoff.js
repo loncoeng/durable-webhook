@@ -1,48 +1,49 @@
-// 再試行の間隔を決める。
+// How long to wait between attempts.
 //
-// 等間隔にしない。一時的な不調なら早い再試行で拾えるし、長期の障害で
-// 1分おきに叩き続けるのは相手にも自分にも無駄でしかない。前half は短く、
-// 後half は長く空ける。
+// Deliberately uneven. A brief wobble is caught by an early retry, and
+// hammering a long outage once a minute wastes both ends. The early steps are
+// short and the later ones are far apart.
 //
-// 上限を超えたものは捨てずに退避する。捨てるかどうかは人間が決める。
+// Anything past the last attempt is set aside rather than dropped. Throwing it
+// away is a decision for a person.
 
-/** 試行 n 回目の後、次に試みるまでの待ち時間（ミリ秒）。 */
+/** After attempt n, how long to wait before the next one (milliseconds). */
 export const BACKOFF_MS = [
-  60_000,        // 1分
-  5 * 60_000,    // 5分
-  15 * 60_000,   // 15分
-  60 * 60_000,   // 1時間
-  6 * 60 * 60_000, // 6時間
+  60_000,        // 1 minute
+  5 * 60_000,    // 5 minutes
+  15 * 60_000,   // 15 minutes
+  60 * 60_000,   // 1 hour
+  6 * 60 * 60_000, // 6 hours
 ];
 
-export const MAX_ATTEMPTS = BACKOFF_MS.length + 1; // 初回 + 再試行5回
+export const MAX_ATTEMPTS = BACKOFF_MS.length + 1; // the first one, plus 5 retries
 
 /**
- * 次に配送を試みる時刻を返す。もう試さないなら null。
+ * When to try delivering next, or null if there is to be no next time.
  *
- * @param {number} attempts これまでに試した回数（初回配送を含む）
- * @param {number} now      現在時刻（ミリ秒）
+ * @param {number} attempts how many attempts have been made, the first included
+ * @param {number} now      the current time in milliseconds
  * @returns {number|null}
  */
 export function nextAttemptAt(attempts, now) {
   if (attempts < 1) {
-    throw new RangeError("attempts は 1 以上でなければならない");
+    throw new RangeError("attempts must be at least 1");
   }
   const index = attempts - 1;
   if (index >= BACKOFF_MS.length) return null;
   return now + BACKOFF_MS[index];
 }
 
-/** これ以上試さないかどうか。 */
+/** Whether there is anything left to try. */
 export function isExhausted(attempts) {
   return attempts >= MAX_ATTEMPTS;
 }
 
 /**
- * 配送待ちが、今の時刻で試行対象になるか。
+ * Whether a pending delivery is due at the given time.
  *
- * nextAt を過ぎているものだけを拾う。Cron は数分おきに回るので、
- * 少し過ぎている程度は普通に起こる。
+ * Only the ones whose nextAt has passed. Cron runs every few minutes, so being
+ * somewhat past it is the normal case rather than a late one.
  */
 export function isDue(pending, now) {
   return typeof pending?.nextAt === "number" && pending.nextAt <= now;
